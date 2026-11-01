@@ -31,11 +31,15 @@ import { generateAgentsMd } from "./agents-md.js";
 import { generateSbom, renderSbomMarkdown } from "./sbom.js";
 import { checkSbom, renderSbomCheckMarkdown } from "./sbom-check.js";
 import { checkSecureCoding, renderSecureCodingMarkdown, toSarif } from "./secure-coding.js";
+import { FIXABLE_RULES, fixSecureCoding, renderSecureFixMarkdown } from "./secure-fix.js";
+import { DEPS_FIX_KINDS, fixDependencies, renderDepsFixMarkdown } from "./deps-fix.js";
+import { DATABASE_TYPES, prepareDatabase, renderDatabaseMarkdown } from "./database.js";
+import { verifyStartup, renderStartupMarkdown } from "./startup.js";
 import { DEPLOY_HOST_RE, DEPLOY_IMAGE_RE, DEPLOY_IMAGE_REGISTRY_RE, generateDeploy, renderDeployMarkdown } from "./deploy.js";
 import { rehearseMigration, renderRehearsalMarkdown } from "./rehearse.js";
 import { prepareEgovframeOfflineBundle } from "./offline-bundle-plan.js";
 import { renderBundleMarkdown } from "./offline-bundle.js";
-import { progressFromExtra } from "./progress.js";
+import { flushProgress, progressFromExtra } from "./progress.js";
 import { prepareDelivery, verifyDelivery, renderDeliveryMarkdown, renderVerifyMarkdown, DELIVERY_ITEMS, DELIVERY_DEFAULT_INCLUDE } from "./delivery.js";
 import { reassembleComponents, renderReassembleMarkdown } from "./reassemble.js";
 import { resolveToolLang, toolDescription } from "./i18n.js";
@@ -46,6 +50,16 @@ import { applyDeprecatedParams } from "./deprecations.js";
 /** MCP handshake 에 알리는 서버 버전 — package.json 을 단일 출처로 사용한다. */
 export { SERVER_VERSION } from "./version.js";
 import { SERVER_VERSION } from "./version.js";
+import { L } from "./lang.js";
+import { MAVEN_MIRROR_RE } from "./maven-resilience.js";
+
+/** v1.6: 빌드·테스트 결과의 일시 장애 안내 줄 */
+function resilienceLines(r: { failureKind?: string; failureHint?: string; attempts?: number }): string[] {
+  const out: string[] = [];
+  if (r.attempts && r.attempts > 1) out.push(L(`- 실행 ${r.attempts}회(원격 저장소 일시 장애로 다시 실행)`, `- Ran ${r.attempts} times (re-run after a transient repository outage)`));
+  if (r.failureKind === "repository-unavailable" && r.failureHint) out.push("", `🌐 ${r.failureHint}`);
+  return out;
+}
 
 /** 통합 템플릿 카탈로그 요약 — 카탈로그 파일이 없어도 기본 목록은 계속 동작한다. */
 function unifiedTemplateSummary():
@@ -72,6 +86,13 @@ function stripEdits(r: Pick<MigrateResult, "items">): Record<string, unknown> {
 
 export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
   const server = new McpServer({ name: "egovframe-scaffold-mcp", version: SERVER_VERSION });
+  // v1.6: 모든 도구 처리기가 응답 전에 진행 알림을 다 보내도록 감싼다
+  const register = server.registerTool.bind(server) as (...a: unknown[]) => unknown;
+  (server as unknown as { registerTool: (...a: unknown[]) => unknown }).registerTool = (name: unknown, config: unknown, handler: unknown) =>
+    register(name, config, async (...a: unknown[]) => {
+      // 입력 스키마가 있으면 (args, extra), 없으면 (extra) — extra 는 항상 마지막
+      try { return await (handler as (...x: unknown[]) => Promise<unknown>)(...a); } finally { const extra = a[a.length - 1]; if (extra && typeof extra === "object") await flushProgress(extra); }
+    });
   const lang = opts.lang ?? resolveToolLang();
   const d = (name: string, ko: string) => toolDescription(name, ko, lang);
   const t = (name: string) => toolTitle(name, lang);
@@ -560,6 +581,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
         `- DbType: ${r.database ?? "미설정"}`,
         `- 감지 컴포넌트(${r.detectedComponents.length}): ${r.detectedComponents.map((c) => c.id).join(", ") || "없음"}`,
         `- AI 계층: ${r.aiLayer ? "있음" : "없음"} / 매니페스트: ${r.hasManifest ? "있음" : "없음"}`,
+        `- DB 준비: 조립 스크립트 ${r.dbScripts.componentScripts}개 · 적재용 준비본 ${r.dbScripts.prepared.join(", ") || "없음"} · compose ${r.dbScripts.compose ? "있음" : "없음"}`,
       ];
       if (r.issues.length) lines.push(``, `⚠️ 이슈:`, ...r.issues.map((i) => ` · ${i}`));
       if (r.suggestions.length) lines.push(``, `💡 제안:`, ...r.suggestions.map((s) => ` · ${s}`));
@@ -794,7 +816,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
   // ── 보안약점 점검 (v0.44) ─────────────────────────────
   server.registerTool(
     "check_egovframe_secure_coding",
-    { title: t("check_egovframe_secure_coding"), description: d("check_egovframe_secure_coding", "행정안전부·KISA 「소프트웨어 개발보안 가이드」(2021) 구현단계 보안약점 중 정적 패턴으로 오탐을 통제할 수 있는 항목을 소스에서 찾습니다 — SQL 삽입(MyBatis ${…}·iBATIS $…$·JDBC 문자열 연결), 크로스사이트 스크립트(요청 값·EL param/header/cookie 무이스케이프 출력, <c:out escapeXml=\"false\">), 경로 조작, 신뢰되지 않는 URL 자동접속, 운영체제 명령어, XML 외부개체, 취약한 해시·암호, 보안 문맥의 부적절한 난수, 코드·설정의 하드코드된 중요정보, HttpOnly·Secure 없는 쿠키, printStackTrace, 빈 catch, 역직렬화, 남은 디버그 출력. 규칙은 catalog/secure-coding-rules.json 데이터이고 주석은 무시합니다. 항목마다 파일·라인·CWE·등급·조치와 출처(공통컴포넌트 원본·수정본·매니페스트 없음·프로젝트 코드·테스트)를 냅니다. 예외는 .egovframe-secure-ignore.json(사유·검토자 필수), baselinePath(이전 JSON 결과·SARIF)와 비교해 새 항목 표시, format=sarif 또는 sarifPath 로 SARIF 2.1.0(GitHub code scanning 등). v1.5: 메서드 안 데이터 흐름(요청 파라미터·헤더·쿠키·Spring 바인딩 값 → 대입·결합·append → JDBC·파일 경로·OS 명령·리다이렉트)으로 등급을 올리거나 내리고 변수를 거친 미탐을 찾습니다(메서드 간 흐름은 보지 않음). 패턴 기반 진단 보조이며 공인 진단을 대체하지 않습니다."), inputSchema: {
+    { title: t("check_egovframe_secure_coding"), description: d("check_egovframe_secure_coding", "행정안전부·KISA 「소프트웨어 개발보안 가이드」(2021) 구현단계 보안약점 중 정적 패턴으로 오탐을 통제할 수 있는 항목을 소스에서 찾습니다 — SQL 삽입(MyBatis ${…}·iBATIS $…$·JDBC 문자열 연결), 크로스사이트 스크립트(요청 값·EL param/header/cookie 무이스케이프 출력, <c:out escapeXml=\"false\">), 경로 조작, 신뢰되지 않는 URL 자동접속, 운영체제 명령어, XML 외부개체, 취약한 해시·암호, 보안 문맥의 부적절한 난수, 코드·설정의 하드코드된 중요정보, HttpOnly·Secure 없는 쿠키, printStackTrace, 빈 catch, 역직렬화, 남은 디버그 출력. 규칙은 catalog/secure-coding-rules.json 데이터이고 주석은 무시합니다. 항목마다 파일·라인·CWE·등급·조치와 출처(공통컴포넌트 원본·수정본·매니페스트 없음·프로젝트 코드·테스트)를 냅니다. 예외는 .egovframe-secure-ignore.json(사유·검토자 필수), baselinePath(이전 JSON 결과·SARIF)와 비교해 새 항목 표시, format=sarif 또는 sarifPath 로 SARIF 2.1.0(GitHub code scanning 등). v1.5: 메서드 안 데이터 흐름(요청 파라미터·헤더·쿠키·Spring 바인딩 값 → 대입·결합·append → JDBC·파일 경로·OS 명령·리다이렉트)으로 등급을 올리거나 내리고 변수를 거친 미탐을 찾습니다(메서드 간 흐름은 보지 않음). v1.7: HTMLTagFilter 가 등록돼 있으면(요청 값을 엔티티로 저장) c:out escapeXml=\"false\" 를 낮음으로 보고 사유를 적습니다. 고칠 수 있는 항목은 fix_egovframe_secure_coding 으로. 패턴 기반 진단 보조이며 공인 진단을 대체하지 않습니다."), inputSchema: {
       projectDir: z.string().describe("프로젝트 디렉터리(절대경로 권장) — 읽기만 함"),
       rules: z.array(z.string()).optional().describe("점검할 규칙 id(기본 전체)"),
       paths: z.array(z.string()).optional().describe("프로젝트 상대 경로 접두어로 좁히기(예: src/main/java/egovframework/example)"),
@@ -815,6 +837,89 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
       const text = args.format === "json" ? JSON.stringify(r, null, 2) : args.format === "sarif" ? JSON.stringify(toSarif(r), null, 2) : renderSecureCodingMarkdown(r, args.topN ?? 40);
       // 경고는 본문과 섞지 않는다(format=json·sarif 본문이 그대로 파싱되도록 별도 content 항목)
       return { content: [{ type: "text" as const, text }, ...warnings.map((w) => ({ type: "text" as const, text: `⚠ ${w}` }))], structuredContent: r as unknown as Record<string, unknown> };
+    },
+  );
+  // ── 보안약점 자동 조치 (v1.7) ─────────────────────────
+  server.registerTool(
+    "fix_egovframe_secure_coding",
+    { title: t("fix_egovframe_secure_coding"), description: d("fix_egovframe_secure_coding", "check_egovframe_secure_coding 이 찾은 항목 중 고친 결과를 규칙으로 정할 수 있는 것만 고치고, 나머지는 사유와 함께 수동 항목으로 냅니다. xss-cout-unescaped: 줄바꿈을 <br/> 로 바꾸는 값은 fn:escapeXml 로 먼저 감싸고, 단순 속성 값은 escapeXml=\"false\" 를 지웁니다(HTML 편집기 값일 수 있는 본문 필드는 수동, HTMLTagFilter 가 등록돼 있으면 요청 값이 엔티티로 저장되므로 ignoreHtmlTagFilter=true 가 아니면 모두 수동). print-stack-trace·debug-code: 클래스의 로거(SLF4J·Commons Logging·Log4j 2/1·Lombok)로 바꿉니다(로거가 없거나 정적 문맥에서 인스턴스 로거면 수동). cookie-flags: Secure·HttpOnly 는 동작을 바꾸므로 제안만. 공통컴포넌트 출처·테스트는 기본 제외(includeComponents·includeTests). 기본 dryRun(바뀔 줄과 재점검 결과), 적용은 파일 트랜잭션(원본은 migration-backup/)이며 재점검이 계획과 다르면(고친 항목만 사라지고 새 항목·다른 규칙 변화가 없어야 함) 적용하지 않습니다."), inputSchema: {
+      projectDir: z.string().describe("프로젝트 디렉터리(절대경로 권장)"),
+      rules: z.array(z.enum(FIXABLE_RULES)).optional().describe("조치할 규칙(기본 전체: xss-cout-unescaped·print-stack-trace·debug-code·cookie-flags)"),
+      paths: z.array(z.string()).optional().describe("프로젝트 상대 경로 접두어로 좁히기"),
+      includeComponents: z.boolean().default(false).describe("공통컴포넌트 출처(매니페스트·egovframework/com 경로)도 고침 — 업그레이드·재조립 때 원본으로 바뀔 수 있음"),
+      includeTests: z.boolean().default(false).describe("src/test 도 고침"),
+      ignoreHtmlTagFilter: z.boolean().default(false).describe("HTMLTagFilter 가 등록돼 있어도 c:out 을 고침(필터를 걷어내고 출력 escape 로 바꿀 때만)"),
+      dryRun: z.boolean().default(true).describe("true(기본)면 파일을 쓰지 않고 계획·재점검만"),
+      topN: z.number().int().min(1).max(500).default(30).describe("Markdown 에 보일 파일·수동 항목 수"),
+      format: z.enum(["markdown", "json"]).default("markdown").describe("응답 형식"),
+    }, outputSchema: OUTPUT_SCHEMAS.fix_egovframe_secure_coding.shape, annotations: toolAnnotations("fix_egovframe_secure_coding") },
+    async (args) => {
+      enforceAllowedRoots(args);
+      const r = await fixSecureCoding({ projectDir: args.projectDir, rules: args.rules, paths: args.paths, includeComponents: args.includeComponents, includeTests: args.includeTests, ignoreHtmlTagFilter: args.ignoreHtmlTagFilter, dryRun: args.dryRun });
+      const text = args.format === "json" ? JSON.stringify(r, null, 2) : renderSecureFixMarkdown(r, args.topN);
+      return { content: [{ type: "text", text }], structuredContent: r as unknown as Record<string, unknown> };
+    },
+  );
+  // ── 취약 의존성 자동 조치 (v1.9) ──────────────────────
+  server.registerTool(
+    "fix_egovframe_dependencies",
+    { title: t("fix_egovframe_dependencies"), description: d("fix_egovframe_dependencies", "check_egovframe_dependencies 가 찾기만 하던 의존성 문제를 규칙으로 정할 수 있는 만큼 pom.xml(멀티 모듈 포함)에서 고칩니다. 순서: (1) parent 상향 — 공식 parent 5.x 를 target(기본 권장 버전)으로(migrate_egovframe_project target 의 자동 항목), (2) 고정 해제 — parent(또는 Boot BOM)가 관리하는 좌표에 그보다 낮게 적은 <version> 을 지워 parent 에 맡김(major 가 다르면 수동), (3) 좌표 교체 — 좌표만 바뀌고 패키지가 같은 것(mysql-connector-java→mysql-connector-j, ojdbc→ojdbc11, xbean→xmlbeans), (4) 취약 버전 상향 — 직접 적은 버전(리터럴 또는 같은 계열 좌표만 쓰는 버전 속성)이 OSV 에 걸리면 모든 권고를 피하는 가장 낮은 같은 major 정식 릴리스로(저장소 maven-metadata 로 실제 배포 버전 확인, major 가 바뀌거나 수정 버전이 없으면 수동). parent 가 관리하는 버전·전이 의존성의 취약점은 고치지 않고 보고합니다. 결과에 선언 좌표 기준 전·후 취약점 수를 적습니다. 기본 dryRun(계획·변경 미리보기), 적용은 파일 트랜잭션(원본은 migration-backup/<시각>-deps-fix-…/)이며 compile 로 확인해 실패하면 모두 되돌립니다. Gradle 은 리터럴 'g:a:v' 의 고정 해제·취약 버전 상향만. 오프라인 번들(EGOVFRAME_OFFLINE_BUNDLE)이 있으면 OSV 를 번들로 판정합니다."), inputSchema: {
+      projectDir: z.string().describe("프로젝트 디렉터리(절대경로 권장)"),
+      kinds: z.array(z.enum(DEPS_FIX_KINDS)).optional().describe("적용할 조치(기본 전부: parent·unpin·coordinate·cve-bump)"),
+      target: z.string().regex(/^5\.\d+\.\d+$/).optional().describe("parent 상향 목표 5.x 버전(기본: 권장 버전)"),
+      offline: z.boolean().default(false).describe("true 면 OSV 를 조회하지 않음(취약 버전 상향·전후 집계 생략)"),
+      verify: z.boolean().default(true).describe("dryRun=false 일 때 compile 로 확인하고 실패하면 되돌림"),
+      dryRun: z.boolean().default(true).describe("true(기본)면 파일을 쓰지 않고 계획만"),
+      timeoutMs: z.number().int().min(10_000).max(3_600_000).optional().describe("compile 제한 시간(기본 600000)"),
+      topN: z.number().int().min(1).max(500).default(40).describe("Markdown 에 보일 조치·수동 항목 수"),
+      format: z.enum(["markdown", "json"]).default("markdown").describe("응답 형식"),
+    }, outputSchema: OUTPUT_SCHEMAS.fix_egovframe_dependencies.shape, annotations: toolAnnotations("fix_egovframe_dependencies") },
+    async (args, extra) => {
+      enforceAllowedRoots(args);
+      const r = await fixDependencies({ progress: progressFromExtra(extra), projectDir: args.projectDir, kinds: args.kinds, target: args.target, offline: args.offline, verify: args.verify, dryRun: args.dryRun, timeoutMs: args.timeoutMs });
+      const text = args.format === "json" ? JSON.stringify(r, null, 2) : renderDepsFixMarkdown(r, args.topN);
+      return { content: [{ type: "text", text }], structuredContent: r as unknown as Record<string, unknown> };
+    },
+  );
+  // ── DB 준비·검증 (v1.10) ───────────────────────────────
+  server.registerTool(
+    "prepare_egovframe_database",
+    { title: t("prepare_egovframe_database"), description: d("prepare_egovframe_database", "공통컴포넌트·프로젝트의 DB 스크립트를 개발·테스트 DB 에 바로 넣을 수 있게 준비합니다. 원본은 자동으로 고릅니다 — 조립 선별본(scripts/egovframe-components/<db>/, 매니페스트 설치 순서) → 공통컴포넌트 전체(script/ddl·dml/<db>/) → 이름 규칙(ddl·schema / dml·data), 또는 scripts 로 지정. 문장 단위로 나눠 스키마·데이터로 가르고, 겹친 문장을 한 번만 두고, 외래키·뷰 참조 순서로 테이블을 정렬하며(데이터도 부모 행이 먼저), 선별본이 참조하는데 빠진 테이블(예: COMTCCMMNDETAILCODE → COMTCCMMNCODE)은 공통컴포넌트 통합 스크립트에서 보완합니다. MySQL·MariaDB 는 테이블마다 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci 와 스크립트 머리의 SET NAMES utf8mb4 로 클라이언트 문자셋과 무관하게 한글이 같게 저장되게 하고(Docker 초기화의 한글 이중 인코딩·latin1 클라이언트의 정렬 규칙 충돌), PostgreSQL 은 client_encoding UTF8. 산출물은 scripts/egovframe-db/<db>/01-schema.sql·02-data.sql 과 docker-compose.db.yml(MySQL 8.4·MariaDB 11.4·PostgreSQL 16, 접속 정보는 프로젝트 설정), 적재 명령(bash·cmd). Oracle·Tibero·Altibase·CUBRID 는 스크립트·명령만. run=true 면 Docker 로 DB 를 띄워 넣고 테이블 수·필수 행(관리자 계정·메뉴·공통코드)·한글 왕복을 확인한 뒤 컨테이너를 지웁니다(keep=true 면 남김). 기본 dryRun, 기존 파일은 덮어쓰지 않습니다(다른 내용이면 거부). 운영 DB 적재·스키마 이관은 하지 않습니다."), inputSchema: {
+      projectDir: z.string().describe("프로젝트 디렉터리(절대경로 권장)"),
+      database: z.enum([...DATABASE_TYPES, "mariadb", "postgresql"] as [string, ...string[]]).optional().describe("DB 종류(기본: 프로젝트 Globals.DbType·JDBC URL)"),
+      scripts: z.array(z.string()).optional().describe("직접 고를 원본 스크립트(프로젝트 상대 경로, 순서대로)"),
+      includeComments: z.boolean().default(false).describe("공통컴포넌트 전체의 주석 스크립트(script/comment/<db>/)도 넣음"),
+      offline: z.boolean().default(false).describe("true 면 빠진 참조 테이블 보완에 공통컴포넌트 저장소를 내려받지 않음"),
+      dryRun: z.boolean().default(true).describe("true(기본)면 파일을 쓰지 않고 계획만"),
+      run: z.boolean().default(false).describe("Docker 로 DB 를 띄워 적재·확인(mysql·maria·postgres)"),
+      keep: z.boolean().default(false).describe("run=true 뒤 컨테이너를 남김"),
+      imageRegistry: z.string().regex(DEPLOY_IMAGE_REGISTRY_RE, "예: docker.io/library, mirror.gcr.io/library").default("docker.io/library").describe("DB 이미지 레지스트리(사내 미러 등)"),
+      timeoutMs: z.number().int().min(30_000).max(3_600_000).default(600_000).describe("run=true 초기화 대기 제한(ms)"),
+      format: z.enum(["markdown", "json"]).default("markdown").describe("응답 형식"),
+    }, outputSchema: OUTPUT_SCHEMAS.prepare_egovframe_database.shape, annotations: toolAnnotations("prepare_egovframe_database") },
+    async (args, extra) => {
+      enforceAllowedRoots(args);
+      const r = await prepareDatabase({ progress: progressFromExtra(extra), projectDir: args.projectDir, database: args.database, scripts: args.scripts, includeComments: args.includeComments, offline: args.offline, dryRun: args.dryRun, run: args.run, keep: args.keep, imageRegistry: args.imageRegistry, timeoutMs: args.timeoutMs });
+      const text = args.format === "json" ? JSON.stringify(r, null, 2) : renderDatabaseMarkdown(r);
+      return { content: [{ type: "text", text }], structuredContent: r as unknown as Record<string, unknown> };
+    },
+  );
+  // ── 기동 검증 (v1.11) ──────────────────────────────────
+  server.registerTool(
+    "verify_egovframe_startup",
+    { title: t("verify_egovframe_startup"), description: d("verify_egovframe_startup", "프로젝트를 바꾸지 않고 실제로 띄워 기동되는지 확인합니다 — 컴파일로 잡히지 않는 빈 생성 실패·설정 파일 경로·DB 접속·JDBC 드라이버·MyBatis 매퍼 XML 오류를 찾습니다. Spring Boot 는 mvn spring-boot:run / gradle bootRun 에 빈 포트를 --server.port 로 주고, Classic war 는 패키징한 war 를 캐시의 고정 버전 Tomcat 10.1(Servlet 6.1 이상이면 11.0, sha256 검증, 사내 미러 EGOVFRAME_MAVEN_MIRROR 우선)에 ROOT 로 두고 임시 CATALINA_BASE 로 띄웁니다(tomcatHome 으로 설치된 Tomcat 지정 가능). 로그의 기동 완료 문구 뒤 HTTP(기본 /, actuator 가 있으면 /actuator/health)로 확인해 5xx 가 아니면 기동으로 보고, 실패면 Spring 원인 사슬을 구조화합니다 — 종류(빌드 실패·원격 저장소 장애·포트 사용 중·JDBC 드라이버 없음·DB 접속 실패·매퍼 XML 오류·설정 누락·javax 네임스페이스·빈 생성 실패·HTTP 오류·시간 초과), 실제로 실패한 빈 이름, 관련 설정 자원(배포 사본 경로를 프로젝트 원본 경로로)·줄, JDBC URL·드라이버, 종류별 처방(드라이버 좌표, prepare_egovframe_database, migrate_egovframe_project 등)과 로그 끝부분. 끝나면 프로세스 트리를 끝냅니다. 화면 기능 테스트·운영 WAS(JEUS 등) 기동은 하지 않습니다."), inputSchema: {
+      projectDir: z.string().describe("프로젝트 디렉터리(절대경로 권장, 멀티 모듈이면 모듈 디렉터리)"),
+      path: z.string().regex(/^\/[\w\-./]*$/).optional().describe("기동 뒤 확인할 경로(기본 / — Boot 에 actuator 가 있으면 /actuator/health)"),
+      port: z.number().int().min(1024).max(65535).optional().describe("고정 포트(기본: 빈 포트)"),
+      timeoutMs: z.number().int().min(30_000).max(1_800_000).default(300_000).describe("전체 제한(ms, 첫 실행은 의존성 다운로드 포함)"),
+      tomcatHome: z.string().optional().describe("Classic war 를 띄울 설치된 Tomcat 10.1/11.0(폐쇄망 등, 기본: 캐시에 내려받음)"),
+      format: z.enum(["markdown", "json"]).default("markdown").describe("응답 형식"),
+    }, outputSchema: OUTPUT_SCHEMAS.verify_egovframe_startup.shape, annotations: toolAnnotations("verify_egovframe_startup") },
+    async (args, extra) => {
+      enforceAllowedRoots(args);
+      const r = await verifyStartup({ progress: progressFromExtra(extra), projectDir: args.projectDir, path: args.path, port: args.port, timeoutMs: args.timeoutMs, tomcatHome: args.tomcatHome });
+      const text = args.format === "json" ? JSON.stringify(r, null, 2) : renderStartupMarkdown(r);
+      return { content: [{ type: "text", text }], structuredContent: r as unknown as Record<string, unknown> };
     },
   );
   // ── SBOM 운영 (v0.40) ─────────────────────────────────
@@ -962,7 +1067,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
       projectDir: z.string().describe("대상 프로젝트 디렉터리(절대경로 권장)"),
       configId: z.enum(loadConfigCatalog().entries.map((e) => e.id) as [string, ...string[]]).describe("설정 템플릿 id (예: datasource, transaction-datasource, logging-rolling-file, scheduling-cron-trigger)"),
       format: z.enum(CONFIG_FORMATS).default("xml").describe("xml | javaConfig | yaml | properties (yaml·properties 는 logging 계열만)"),
-      fields: z.record(z.union([z.string(), z.boolean()])).optional().describe("템플릿 변수 덮어쓰기 (예: { txtDatasourceName: 'dataSource', rdoType: 'DBCP', txtUrl: 'jdbc:mysql://…', txtConfigPackage: 'kr.go.sample.config' }). 템플릿에 없는 필드는 거부"),
+      fields: z.record(z.string(), z.union([z.string(), z.boolean()])).optional().describe("템플릿 변수 덮어쓰기 (예: { txtDatasourceName: 'dataSource', rdoType: 'DBCP', txtUrl: 'jdbc:mysql://…', txtConfigPackage: 'kr.go.sample.config' }). 템플릿에 없는 필드는 거부"),
       fileName: z.string().optional().describe("파일명(확장자 제외) 또는 JavaConfig 클래스명. 미지정 시 Initializr 기본값(예: context-datasource, EgovDataSourceConfig)"),
       outputDir: z.string().optional().describe("프로젝트 상대 출력 디렉터리. 미지정 시 xml→src/main/resources/egovframework/spring(logging 은 src/main/resources), javaConfig→src/main/java/<패키지>"),
       dryRun: z.boolean().default(false).describe("true면 파일을 쓰지 않고 내용·경로·컨텍스트만 반환"),
@@ -1077,7 +1182,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
   );
   server.registerTool(
     "generate_egovframe_crud",
-    { title: t("generate_egovframe_crud"), description: d("generate_egovframe_crud", "eGovFrame Development의 공식 CRUD wizard 입력 체계에 맞춰 VO·Mapper(XML)·Service·Controller·JSP(선택)·JUnit 5 테스트(선택) 골격을 생성합니다. Classic XML과 Boot REST 프로필을 지원하며, 전체 파일 충돌을 먼저 검사해 하나라도 존재하면 아무것도 쓰지 않습니다. v1.4: ddl 에 CREATE TABLE 문을 주면 컬럼·타입·기본키·NOT NULL·자동 증가·COMMENT 를 읽어 필드를 만들고(COMMENT·DEFAULT 안의 콤마·괄호·'primary key' 문구에 속지 않음), search 로 방언 중립 LIKE(<bind>) 검색과 이스케이프된 검색 필드를 더합니다."), inputSchema: {
+    { title: t("generate_egovframe_crud"), description: d("generate_egovframe_crud", "eGovFrame Development의 공식 CRUD wizard 입력 체계에 맞춰 VO·Mapper(XML)·Service·Controller·JSP(선택)·JUnit 5 테스트(선택) 골격을 생성합니다. Classic XML과 Boot REST 프로필을 지원하며, 전체 파일 충돌을 먼저 검사해 하나라도 존재하면 아무것도 쓰지 않습니다. v1.4: ddl 에 CREATE TABLE 문을 주면 컬럼·타입·기본키·NOT NULL·자동 증가·COMMENT 를 읽어 필드를 만들고(COMMENT·DEFAULT 안의 콤마·괄호·'primary key' 문구에 속지 않음), search 로 방언 중립 LIKE(<bind>) 검색과 이스케이프된 검색 필드를 더합니다. v1.8: paging 으로 방언별 목록 페이징(LIMIT/OFFSET 또는 공통컴포넌트와 같은 ROWNUM 감싸기), classic 화면의 PaginationInfo·<ui:pagination>, boot REST 의 page·size 응답을 더합니다(방언은 dialect 또는 Globals.DbType)."), inputSchema: {
       projectDir: z.string().describe("대상 프로젝트 디렉터리(절대경로 권장, pom.xml 또는 build.gradle 필요)"),
       tableName: z.string().optional().describe("CRUD 대상 테이블명. 단일 SQL 식별자, 예: SAMPLE_BOARD. ddl 을 주면 생략 가능(주면 DDL 의 테이블명과 같아야 함)"),
       entityName: z.string().optional().describe("생성 클래스명. 미지정 시 tableName에서 PascalCase로 생성"),
@@ -1093,8 +1198,11 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
         label: z.string().optional().describe("Javadoc/JSP 표시명"),
       })).min(1).max(100).optional().describe("테이블 컬럼 정의(ddl 과 둘 중 하나)"),
       ddl: z.string().max(200_000).optional().describe("v1.4: CREATE TABLE 문. 컬럼·타입·PRIMARY KEY·NOT NULL·자동 증가(AUTO_INCREMENT·IDENTITY·SERIAL)·COMMENT(또는 COMMENT ON COLUMN)를 읽어 fields 를 만듭니다. COMMENT·DEFAULT 안의 콤마·괄호와 'primary key' 문구에 속지 않습니다. fields 와 함께 줄 수 없음"),
-      dialect: z.enum(["mysql", "mariadb", "postgresql", "oracle", "tibero", "altibase", "cubrid", "hsql"]).optional().describe("v1.4: ddl 의 DB 방언(oracle·tibero 면 DATE 를 날짜+시각 LocalDateTime 으로)"),
+      dialect: z.enum(["mysql", "mariadb", "postgresql", "oracle", "tibero", "altibase", "cubrid", "hsql"]).optional().describe("v1.4: ddl 의 DB 방언(oracle·tibero 면 DATE 를 날짜+시각 LocalDateTime 으로). v1.8: paging 의 SQL 방식도 이것으로 정함"),
       search: z.array(z.string()).max(10).optional().describe("v1.4: 목록 검색 대상 컬럼(문자열 타입). Mapper 에 방언 중립 LIKE(<bind>)와 searchCondition 분기, classic 화면에 검색 조건·이스케이프된 hidden 필드"),
+      paging: z.boolean().default(false).describe("v1.8: 목록 페이징 — 방언별 SQL(MySQL·MariaDB·PostgreSQL·HSQL 은 LIMIT/OFFSET, Oracle·Tibero·Altibase·CUBRID 는 공통컴포넌트와 같은 ROWNUM 감싸기), classic 은 PaginationInfo·<ui:pagination>, boot 는 page·size 와 {content, totalCount, page, size} 응답. 방언은 dialect, 없으면 프로젝트의 Globals.DbType, 그것도 없으면 설정 파일의 JDBC URL(한 방언일 때)"),
+      pageUnit: z.number().int().min(1).max(100).optional().describe("v1.8: paging 의 한 페이지 행 수(기본 10)"),
+      pageSize: z.number().int().min(1).max(20).optional().describe("v1.8: paging 의 페이지 목록 크기(기본 10)"),
       profile: z.enum(CRUD_PROFILES).default("classic").describe("classic=Spring MVC+JSP, boot=REST Controller"),
       author: z.string().default("egovframe-scaffold-mcp").describe("공식 wizard의 author"),
       createDate: z.string().optional().describe("공식 wizard의 createDate. 미지정 시 오늘 날짜"),
@@ -1123,7 +1231,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
       const lines = [
         head,
         `- 프로젝트: ${r.projectDir}`,
-        `- 프로필: ${r.profile}${r.fieldsFromDdl ? ` · DDL 에서 컬럼 ${r.fieldsFromDdl}개` : ""}${r.search?.length ? ` · 검색 ${r.search.join(", ")}` : ""}`,
+        `- 프로필: ${r.profile}${r.fieldsFromDdl ? ` · DDL 에서 컬럼 ${r.fieldsFromDdl}개` : ""}${r.search?.length ? ` · 검색 ${r.search.join(", ")}` : ""}${r.paging ? ` · 페이징 ${r.paging.dialect}(${r.paging.style === "limit" ? "LIMIT/OFFSET" : "ROWNUM"}${r.paging.dialectFrom === "globals" ? ", Globals.DbType" : r.paging.dialectFrom === "jdbc-url" ? ", JDBC URL" : ""}) ${r.paging.pageUnit}행/${r.paging.pageSize}쪽` : ""}`,
         `- 파일: ${r.files.length}개 (${[...componentCounts].map(([name, count]) => `${name} ${count}`).join(" · ")})`,
         ...r.files.map((file) => `  · ${file.path} (${file.bytes} bytes)`),
       ];
@@ -1136,7 +1244,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
   // ── CI 설정 생성 도구 (v0.19.0) ────────────────────────
   server.registerTool(
     "generate_egovframe_ci",
-    { title: t("generate_egovframe_ci"), description: d("generate_egovframe_ci", "프로젝트에 CI 설정을 생성합니다 — platform=github(.github/workflows/egovframe-ci.yml, 기본)·gitlab(.gitlab-ci.yml)·jenkins(Jenkinsfile, Declarative). 빌드도구(maven/gradle) 자동 감지, JDK 지정, 빌드·테스트(GitLab 은 JUnit 리포트). supplyChain=true 면 이 서버의 CLI(npx egovframe-scaffold-mcp)로 SBOM 생성 → 최소 요소 7종 점검(sbom-check --fail-on minimum) → 전환 준비도 평가서(failOn 기준, 기본 supplyChain:D)를 돌려 기준을 넘으면 실패하고 보고서·SBOM 을 아티팩트로 남기는 공급망 게이트를 추가합니다(GitHub 은 PR 요약에 등급, GitLab 은 CycloneDX 리포트). npmRegistry(사내 npm 레지스트리)·offlineBundle(러너에서 본 오프라인 번들 경로)은 환경 변수로 넣습니다. dryRun으로 내용만 미리볼 수 있고, 실제 생성 시 기존 파일이 있으면 덮어쓰지 않고 거부합니다. delivery=true 면 게이트 끝에 납품 패키지 단계(deliver --write → egovframe-delivery/)를 더해 아티팩트로 남깁니다."), inputSchema: {
+    { title: t("generate_egovframe_ci"), description: d("generate_egovframe_ci", "프로젝트에 CI 설정을 생성합니다 — platform=github(.github/workflows/egovframe-ci.yml, 기본)·gitlab(.gitlab-ci.yml)·jenkins(Jenkinsfile, Declarative). 빌드도구(maven/gradle) 자동 감지, JDK 지정, 빌드·테스트(GitLab 은 JUnit 리포트). supplyChain=true 면 이 서버의 CLI(npx egovframe-scaffold-mcp)로 SBOM 생성 → 최소 요소 7종 점검(sbom-check --fail-on minimum) → 전환 준비도 평가서(failOn 기준, 기본 supplyChain:D)를 돌려 기준을 넘으면 실패하고 보고서·SBOM 을 아티팩트로 남기는 공급망 게이트를 추가합니다(GitHub 은 PR 요약에 등급, GitLab 은 CycloneDX 리포트). npmRegistry(사내 npm 레지스트리)·offlineBundle(러너에서 본 오프라인 번들 경로)은 환경 변수로 넣습니다. Maven 빌드 단계는 원격 저장소 일시 장애(5xx·연결 끊김)일 때만 -U 로 최대 3회 다시 실행하고, mavenMirror 로 사내 미러를 지정할 수 있습니다. dryRun으로 내용만 미리볼 수 있고, 실제 생성 시 기존 파일이 있으면 덮어쓰지 않고 거부합니다. delivery=true 면 게이트 끝에 납품 패키지 단계(deliver --write → egovframe-delivery/)를 더해 아티팩트로 남깁니다."), inputSchema: {
       projectDir: z.string().describe("프로젝트 디렉터리(절대경로 권장)"),
       platform: z.enum(["github", "gitlab", "jenkins"]).default("github").describe("CI 플랫폼: github(GitHub Actions, 기본) | gitlab(.gitlab-ci.yml) | jenkins(Jenkinsfile, Declarative)"),
       jdk: z.string().regex(CI_JDK_RE, "숫자와 점으로 된 버전만 허용 (예: 17, 21, 1.8)").default("17").describe("JDK 버전 (기본 17, 숫자·점만 허용)"),
@@ -1147,6 +1255,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
       supplier: z.string().regex(CI_SUPPLIER_RE, "문자·숫자·공백·.,&()_- 100자 이하").optional().describe("SBOM 공급자(pom <organization><name> 이 없으면 최소 요소 '공급자'가 빠져 게이트가 실패하므로 지정)"),
       npmRegistry: z.string().regex(CI_NPM_REGISTRY_RE, "http(s) URL").optional().describe("사내 npm 레지스트리 URL(NPM_CONFIG_REGISTRY 로 설정 — npx 가 이 서버를 받는 곳)"),
       offlineBundle: z.string().regex(CI_BUNDLE_PATH_RE, "러너에서 본 절대 경로").optional().describe("폐쇄망 러너·에이전트에서 본 오프라인 번들 경로(EGOVFRAME_OFFLINE_BUNDLE 로 설정)"),
+      mavenMirror: z.string().regex(MAVEN_MIRROR_RE, "http(s) URL").optional().describe("v1.6: 사내 Maven 미러 URL(Nexus·Artifactory 프록시). 빌드 단계는 모든 저장소(*)를 이 미러로 보내는 settings 를 -gs 로 쓰고, 게이트의 CLI 단계는 EGOVFRAME_MAVEN_MIRROR 로 받습니다. Maven 빌드에만 적용"),
       secureCoding: z.boolean().default(false).describe("v0.44: 게이트에 보안약점 점검 단계 추가(secure --fail-on high, SARIF 를 GitHub code scanning 에 업로드·GitLab·Jenkins 는 보관)"),
       delivery: z.boolean().default(false).describe("v1.1: 게이트 끝에 납품 패키지 단계 추가(deliver --write → egovframe-delivery/ 를 아티팩트로 보관, 실패 항목이 있으면 단계 실패). supplyChain=true 필요"),
     }, annotations: toolAnnotations("generate_egovframe_ci") },
@@ -1166,7 +1275,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
   // 컴파일·테스트하고, 오류를 파일·라인 단위로 구조화해 생성→검증 루프를 닫는다.
   server.registerTool(
     "build_egovframe_project",
-    { title: t("build_egovframe_project"), description: d("build_egovframe_project", "생성한 eGovFrame 프로젝트를 실제로 빌드(컴파일·테스트·패키지)하고 결과를 구조화해 반환합니다. 빌드도구(maven/gradle)와 래퍼(mvnw/gradlew)를 자동 감지하고, 컴파일·테스트 오류를 파일·라인 단위로 파싱합니다. dryRun으로 실행 예정 명령만 미리볼 수 있습니다. (생성→검증 루프 완성)"), inputSchema: {
+    { title: t("build_egovframe_project"), description: d("build_egovframe_project", "생성한 eGovFrame 프로젝트를 실제로 빌드(컴파일·테스트·패키지)하고 결과를 구조화해 반환합니다. 빌드도구(maven/gradle)와 래퍼(mvnw/gradlew)를 자동 감지하고, 컴파일·테스트 오류를 파일·라인 단위로 파싱합니다. 원격 저장소 일시 장애(5xx·연결 끊김)는 failureKind=repository-unavailable 로 구분하고 -U 로 다시 실행합니다(retryTransient). dryRun으로 실행 예정 명령만 미리볼 수 있습니다. (생성→검증 루프 완성)"), inputSchema: {
       projectDir: z.string().describe("빌드할 프로젝트 루트 디렉터리(pom.xml 또는 build.gradle 위치, 절대경로 권장)"),
       goal: z
         .enum(["compile", "test", "package"])
@@ -1187,6 +1296,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
         .default(200)
         .describe("반환 로그의 최대 줄 수(마지막 N줄). 기본 200줄"),
       dryRun: z.boolean().default(false).describe("true면 실행 없이 감지된 빌드도구·명령만 반환"),
+      retryTransient: z.number().int().min(0).max(3).default(1).describe("원격 저장소 일시 장애(503·연결 끊김)로 실패하면 갱신 인자(-U / --refresh-dependencies)를 붙여 다시 실행할 횟수(0–3). 컴파일·테스트 실패는 다시 실행하지 않음. 기본 1"),
     }, annotations: toolAnnotations("build_egovframe_project") },
     async (args, extra) => {
       enforceAllowedRoots(args);
@@ -1196,6 +1306,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
         timeoutMs: args.timeoutSeconds * 1000,
         maxLogLines: args.maxLogLines,
         dryRun: args.dryRun,
+        retryTransient: args.retryTransient,
       });
 
       if (r.dryRun) {
@@ -1217,14 +1328,14 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
         : r.timedOut
           ? `⏱️ 빌드 시간 초과: ${r.goal} (${r.buildTool}) — ${secs}s 후 중단`
           : `❌ 빌드 실패: ${r.goal} (${r.buildTool}) — exit=${r.exitCode}, ${secs}s`;
-      const lines = [head, `- 명령: ${r.command}`, `- 디렉터리: ${r.cwd}`];
+      const lines = [head, `- 명령: ${r.command}`, `- 디렉터리: ${r.cwd}`, ...resilienceLines(r)];
       if (r.errors && r.errors.length) {
         lines.push(``, `발견된 오류 ${r.errors.length}개:`);
         for (const e of r.errors.slice(0, 50)) {
           lines.push(`  · ${e.file}:${e.line}${e.column ? ":" + e.column : ""} — ${e.message}`);
         }
         if (r.errors.length > 50) lines.push(`  … 외 ${r.errors.length - 50}개`);
-      } else if (!r.success) {
+      } else if (!r.success && r.failureKind !== "repository-unavailable") {
         lines.push(``, `구조화된 오류를 추출하지 못했습니다. 아래 로그를 확인하세요.`);
       }
       if (r.logTail) {
@@ -1241,7 +1352,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
   // 테스트 클래스 내 파일·라인까지 제공해 "어느 테스트가 왜 깨졌는가"에 바로 답한다.
   server.registerTool(
     "test_egovframe_project",
-    { title: t("test_egovframe_project"), description: d("test_egovframe_project", "eGovFrame 프로젝트의 테스트를 실제로 실행하고 JUnit XML 리포트(surefire/gradle)를 읽어 결과를 구조화합니다. 스위트별 통과·실패·오류·건너뜀 수와, 실패 케이스의 메시지·예외 타입·테스트 파일/라인을 반환합니다. testFilter로 특정 클래스/메서드만 실행할 수 있고, dryRun으로 실행 예정 명령을 미리볼 수 있습니다. (build_egovframe_project 의 테스트 후속)"), inputSchema: {
+    { title: t("test_egovframe_project"), description: d("test_egovframe_project", "eGovFrame 프로젝트의 테스트를 실제로 실행하고 JUnit XML 리포트(surefire/gradle)를 읽어 결과를 구조화합니다. 스위트별 통과·실패·오류·건너뜀 수와, 실패 케이스의 메시지·예외 타입·테스트 파일/라인을 반환합니다. testFilter로 특정 클래스/메서드만 실행할 수 있고, 원격 저장소 일시 장애는 다시 실행합니다(retryTransient). dryRun으로 실행 예정 명령을 미리볼 수 있습니다. (build_egovframe_project 의 테스트 후속)"), inputSchema: {
       projectDir: z.string().describe("테스트할 프로젝트 루트 디렉터리(pom.xml 또는 build.gradle 위치, 절대경로 권장)"),
       testFilter: z
         .string()
@@ -1269,6 +1380,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
         .default(50)
         .describe("반환할 실패·오류 케이스 최대 수. 기본 50"),
       dryRun: z.boolean().default(false).describe("true면 실행 없이 감지된 빌드도구·명령·리포트 위치만 반환"),
+      retryTransient: z.number().int().min(0).max(3).default(1).describe("원격 저장소 일시 장애(503·연결 끊김)로 실패하면 갱신 인자(-U / --refresh-dependencies)를 붙여 다시 실행할 횟수(0–3). 컴파일·테스트 실패는 다시 실행하지 않음. 기본 1"),
     }, annotations: toolAnnotations("test_egovframe_project") },
     async (args, extra) => {
       enforceAllowedRoots(args);
@@ -1279,6 +1391,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
         maxLogLines: args.maxLogLines,
         maxFailures: args.maxFailures,
         dryRun: args.dryRun,
+        retryTransient: args.retryTransient,
       });
 
       if (r.dryRun) {
@@ -1302,7 +1415,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
         : r.timedOut
           ? `⏱️ 테스트 시간 초과 — ${secs}s 후 중단 — 집계 ${counts}`
           : `❌ 테스트 실패 — ${counts} — exit=${r.exitCode}, ${secs}s`;
-      const lines = [head, `- 명령: ${r.command}`, `- 디렉터리: ${r.cwd}`, `- 리포트: ${r.reportDir}${r.reportsFound ? "" : " (리포트 없음)"}`];
+      const lines = [head, `- 명령: ${r.command}`, `- 디렉터리: ${r.cwd}`, `- 리포트: ${r.reportDir}${r.reportsFound ? "" : " (리포트 없음)"}`, ...resilienceLines(r)];
 
       if (r.failures && r.failures.length) {
         lines.push(``, `실패·오류 케이스 ${r.failures.length}${r.failuresTruncated ? "+" : ""}개:`);
@@ -1326,7 +1439,7 @@ export function buildServer(opts: { lang?: "ko" | "en" } = {}): McpServer {
           lines.push(`  · ${e.file}:${e.line}${e.column ? ":" + e.column : ""} — ${e.message}`);
         }
       }
-      if (!r.success && !r.reportsFound && !(r.compileErrors && r.compileErrors.length)) {
+      if (!r.success && !r.reportsFound && !(r.compileErrors && r.compileErrors.length) && r.failureKind !== "repository-unavailable") {
         lines.push(``, `리포트가 생성되지 않았습니다 — 컴파일 실패, testFilter 불일치, 테스트 없음, 또는 DB 등 외부 의존성 오류일 수 있습니다. 아래 로그를 확인하세요.`);
       }
       if (r.logTail) {

@@ -1,7 +1,7 @@
 {
-  "version": "1.5.1",
-  "base": "1.5.0",
-  "change": "none",
+  "version": "1.11.0",
+  "base": "1.10.0",
+  "change": "minor",
   "contract": {
     "tools": {
       "add_ai_components": {
@@ -162,6 +162,12 @@
             },
             "projectDir": {
               "type": "string"
+            },
+            "retryTransient": {
+              "type": "integer",
+              "default": 1,
+              "minimum": 0,
+              "maximum": 3
             },
             "timeoutSeconds": {
               "type": "integer",
@@ -1505,9 +1511,22 @@
                   "rule": {
                     "type": "string"
                   },
-                  "severity": {}
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "high",
+                      "low",
+                      "medium"
+                    ]
+                  }
                 }
               }
+            },
+            "htmlTagFilter": {
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "notes": {
               "type": "array",
@@ -2028,6 +2047,7 @@
             "aiLayer",
             "buildSystem",
             "database",
+            "dbScripts",
             "detectedComponents",
             "egovVersion",
             "hasManifest",
@@ -2053,6 +2073,28 @@
                 "string",
                 "null"
               ]
+            },
+            "dbScripts": {
+              "type": "object",
+              "required": [
+                "componentScripts",
+                "compose",
+                "prepared"
+              ],
+              "properties": {
+                "componentScripts": {
+                  "type": "integer"
+                },
+                "compose": {
+                  "type": "boolean"
+                },
+                "prepared": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
             },
             "detectedComponents": {
               "type": "array",
@@ -2122,6 +2164,724 @@
         "output": null,
         "deprecated": {}
       },
+      "fix_egovframe_dependencies": {
+        "input": {
+          "type": "object",
+          "required": [
+            "projectDir"
+          ],
+          "properties": {
+            "dryRun": {
+              "type": "boolean",
+              "default": true
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "json",
+                "markdown"
+              ],
+              "default": "markdown"
+            },
+            "kinds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "coordinate",
+                  "cve-bump",
+                  "parent",
+                  "unpin"
+                ]
+              }
+            },
+            "offline": {
+              "type": "boolean",
+              "default": false
+            },
+            "projectDir": {
+              "type": "string"
+            },
+            "target": {
+              "type": "string",
+              "pattern": "^5\\.\\d+\\.\\d+$"
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 10000,
+              "maximum": 3600000
+            },
+            "topN": {
+              "type": "integer",
+              "default": 40,
+              "minimum": 1,
+              "maximum": 500
+            },
+            "verify": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "required": [
+            "actions",
+            "buildSystem",
+            "dryRun",
+            "files",
+            "kinds",
+            "manual",
+            "notes",
+            "projectDir",
+            "summary",
+            "target"
+          ],
+          "properties": {
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "coordinate",
+                  "file",
+                  "from",
+                  "kind",
+                  "line",
+                  "reason",
+                  "to"
+                ],
+                "properties": {
+                  "coordinate": {
+                    "type": "string"
+                  },
+                  "file": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "type": "string"
+                  },
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "coordinate",
+                      "cve-bump",
+                      "parent",
+                      "unpin"
+                    ]
+                  },
+                  "line": {
+                    "type": "integer"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "backupDir": {
+              "type": "string"
+            },
+            "build": {
+              "type": "object",
+              "required": [
+                "errors",
+                "ran",
+                "success"
+              ],
+              "properties": {
+                "attempts": {
+                  "type": "integer"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "durationMs": {
+                  "type": "number"
+                },
+                "errors": {
+                  "type": "integer"
+                },
+                "failureHint": {
+                  "type": "string"
+                },
+                "failureKind": {
+                  "type": "string"
+                },
+                "firstErrors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "logTail": {
+                  "type": "string"
+                },
+                "ran": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "success": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "timedOut": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "buildSystem": {
+              "type": "string",
+              "enum": [
+                "gradle",
+                "maven",
+                "unknown"
+              ]
+            },
+            "dryRun": {
+              "type": "boolean"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "edits",
+                  "file",
+                  "items",
+                  "preview"
+                ],
+                "properties": {
+                  "edits": {
+                    "type": "integer"
+                  },
+                  "file": {
+                    "type": "string"
+                  },
+                  "items": {
+                    "type": "integer"
+                  },
+                  "preview": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "after",
+                        "before",
+                        "line"
+                      ],
+                      "properties": {
+                        "after": {
+                          "type": "string"
+                        },
+                        "before": {
+                          "type": "string"
+                        },
+                        "line": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "kinds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "coordinate",
+                  "cve-bump",
+                  "parent",
+                  "unpin"
+                ]
+              }
+            },
+            "manual": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "coordinate",
+                  "file",
+                  "kind",
+                  "line",
+                  "reason",
+                  "version"
+                ],
+                "properties": {
+                  "coordinate": {
+                    "type": "string"
+                  },
+                  "file": {
+                    "type": "string"
+                  },
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "line": {
+                    "type": "integer"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "osvError": {
+              "type": "string"
+            },
+            "planPath": {
+              "type": "string"
+            },
+            "projectDir": {
+              "type": "string"
+            },
+            "rolledBack": {
+              "type": "boolean"
+            },
+            "summary": {
+              "type": "object",
+              "required": [
+                "actions",
+                "byKind",
+                "files",
+                "manual"
+              ],
+              "properties": {
+                "actions": {
+                  "type": "integer"
+                },
+                "byKind": {
+                  "type": "object",
+                  "required": [
+                    "coordinate",
+                    "cve-bump",
+                    "parent",
+                    "unpin"
+                  ],
+                  "properties": {
+                    "coordinate": {
+                      "type": "integer"
+                    },
+                    "cve-bump": {
+                      "type": "integer"
+                    },
+                    "parent": {
+                      "type": "integer"
+                    },
+                    "unpin": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "files": {
+                  "type": "integer"
+                },
+                "manual": {
+                  "type": "integer"
+                }
+              }
+            },
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "vulnerabilities": {
+              "type": "object",
+              "required": [
+                "after",
+                "before",
+                "predicted",
+                "remaining"
+              ],
+              "properties": {
+                "after": {
+                  "type": "object",
+                  "required": [
+                    "coordinates",
+                    "declarations",
+                    "ids"
+                  ],
+                  "properties": {
+                    "coordinates": {
+                      "type": "integer"
+                    },
+                    "declarations": {
+                      "type": "integer"
+                    },
+                    "ids": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "before": {
+                  "type": "object",
+                  "required": [
+                    "coordinates",
+                    "declarations",
+                    "ids"
+                  ],
+                  "properties": {
+                    "coordinates": {
+                      "type": "integer"
+                    },
+                    "declarations": {
+                      "type": "integer"
+                    },
+                    "ids": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "predicted": {
+                  "type": "boolean"
+                },
+                "remaining": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "dependency",
+                      "ids",
+                      "version"
+                    ],
+                    "properties": {
+                      "dependency": {
+                        "type": "string"
+                      },
+                      "ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "version": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": {}
+      },
+      "fix_egovframe_secure_coding": {
+        "input": {
+          "type": "object",
+          "required": [
+            "projectDir"
+          ],
+          "properties": {
+            "dryRun": {
+              "type": "boolean",
+              "default": true
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "json",
+                "markdown"
+              ],
+              "default": "markdown"
+            },
+            "ignoreHtmlTagFilter": {
+              "type": "boolean",
+              "default": false
+            },
+            "includeComponents": {
+              "type": "boolean",
+              "default": false
+            },
+            "includeTests": {
+              "type": "boolean",
+              "default": false
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "projectDir": {
+              "type": "string"
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "cookie-flags",
+                  "debug-code",
+                  "print-stack-trace",
+                  "xss-cout-unescaped"
+                ]
+              }
+            },
+            "topN": {
+              "type": "integer",
+              "default": 30,
+              "minimum": 1,
+              "maximum": 500
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "required": [
+            "byRule",
+            "dryRun",
+            "files",
+            "manual",
+            "notes",
+            "projectDir",
+            "summary",
+            "verify"
+          ],
+          "properties": {
+            "backupDir": {
+              "type": "string"
+            },
+            "byRule": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "candidates",
+                  "excluded",
+                  "fixed",
+                  "manual",
+                  "rule"
+                ],
+                "properties": {
+                  "candidates": {
+                    "type": "integer"
+                  },
+                  "excluded": {
+                    "type": "integer"
+                  },
+                  "fixed": {
+                    "type": "integer"
+                  },
+                  "manual": {
+                    "type": "integer"
+                  },
+                  "rule": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "dryRun": {
+              "type": "boolean"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "changes",
+                  "edits",
+                  "path",
+                  "rules"
+                ],
+                "properties": {
+                  "changes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "after",
+                        "before",
+                        "line"
+                      ],
+                      "properties": {
+                        "after": {
+                          "type": "string"
+                        },
+                        "before": {
+                          "type": "string"
+                        },
+                        "line": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  },
+                  "edits": {
+                    "type": "integer"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "rules": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "htmlTagFilter": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "manual": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "code",
+                  "file",
+                  "line",
+                  "reason",
+                  "rule"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "file": {
+                    "type": "string"
+                  },
+                  "line": {
+                    "type": "integer"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "rule": {
+                    "type": "string"
+                  },
+                  "suggestion": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "planPath": {
+              "type": "string"
+            },
+            "projectDir": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "object",
+              "required": [
+                "candidates",
+                "excluded",
+                "files",
+                "fixed",
+                "manual"
+              ],
+              "properties": {
+                "candidates": {
+                  "type": "integer"
+                },
+                "excluded": {
+                  "type": "integer"
+                },
+                "files": {
+                  "type": "integer"
+                },
+                "fixed": {
+                  "type": "integer"
+                },
+                "manual": {
+                  "type": "integer"
+                }
+              }
+            },
+            "verify": {
+              "type": "object",
+              "required": [
+                "after",
+                "before",
+                "expectedRemoved",
+                "ok",
+                "otherRulesUnchanged",
+                "removed",
+                "unexpected"
+              ],
+              "properties": {
+                "after": {
+                  "type": "integer"
+                },
+                "before": {
+                  "type": "integer"
+                },
+                "expectedRemoved": {
+                  "type": "integer"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "otherRulesUnchanged": {
+                  "type": "boolean"
+                },
+                "removed": {
+                  "type": "integer"
+                },
+                "unexpected": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": {}
+      },
       "generate_agents_md": {
         "input": {
           "type": "object",
@@ -2182,6 +2942,10 @@
               "type": "string",
               "default": "17",
               "pattern": "^[0-9]{1,2}(\\.[0-9]{1,3}){0,2}$"
+            },
+            "mavenMirror": {
+              "type": "string",
+              "pattern": "^https?:\\/\\/[A-Za-z0-9.\\-]+(?::\\d{1,5})?(?:\\/[A-Za-z0-9._~%\\-\\/]*)?$"
             },
             "npmRegistry": {
               "type": "string",
@@ -2413,6 +3177,20 @@
             },
             "mapperPackage": {
               "type": "string"
+            },
+            "pageSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "pageUnit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "paging": {
+              "type": "boolean",
+              "default": false
             },
             "profile": {
               "type": "string",
@@ -3301,7 +4079,76 @@
                         }
                       }
                     },
-                    "supplyChain": {}
+                    "supplyChain": {
+                      "type": "object",
+                      "required": [
+                        "caveats",
+                        "factors",
+                        "grade",
+                        "max",
+                        "scale",
+                        "score"
+                      ],
+                      "properties": {
+                        "caveats": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "factors": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "required": [
+                              "band",
+                              "id",
+                              "label",
+                              "points",
+                              "value"
+                            ],
+                            "properties": {
+                              "band": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "label": {
+                                "type": "string"
+                              },
+                              "note": {
+                                "type": "string"
+                              },
+                              "points": {
+                                "type": "integer"
+                              },
+                              "value": {
+                                "type": "number"
+                              }
+                            }
+                          }
+                        },
+                        "grade": {
+                          "type": "string",
+                          "enum": [
+                            "A",
+                            "B",
+                            "C",
+                            "D"
+                          ]
+                        },
+                        "max": {
+                          "type": "integer"
+                        },
+                        "scale": {
+                          "type": "string"
+                        },
+                        "score": {
+                          "type": "integer"
+                        }
+                      }
+                    }
                   }
                 },
                 "migration": {
@@ -4167,8 +5014,24 @@
                 "success"
               ],
               "properties": {
+                "attempts": {
+                  "type": "integer"
+                },
                 "errors": {
                   "type": "integer"
+                },
+                "failureHint": {
+                  "type": "string"
+                },
+                "failureKind": {
+                  "type": "string",
+                  "enum": [
+                    "compile",
+                    "other",
+                    "repository-unavailable",
+                    "test",
+                    "timeout"
+                  ]
                 },
                 "ran": {
                   "type": "boolean"
@@ -4338,7 +5201,29 @@
             "projectDir": {
               "type": "string"
             },
-            "remaining": {},
+            "remaining": {
+              "type": "object",
+              "required": [
+                "auto",
+                "byKind",
+                "files",
+                "manual"
+              ],
+              "properties": {
+                "auto": {
+                  "type": "integer"
+                },
+                "byKind": {
+                  "type": "object"
+                },
+                "files": {
+                  "type": "integer"
+                },
+                "manual": {
+                  "type": "integer"
+                }
+              }
+            },
             "rteVersion": {
               "type": [
                 "string",
@@ -4546,9 +5431,434 @@
                   "index": {
                     "type": "integer"
                   },
-                  "item": {}
+                  "item": {
+                    "type": "object",
+                    "required": [
+                      "action",
+                      "file",
+                      "from",
+                      "kind",
+                      "line",
+                      "reason",
+                      "to"
+                    ],
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "auto",
+                          "manual"
+                        ]
+                      },
+                      "file": {
+                        "type": "string"
+                      },
+                      "from": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "line": {
+                        "type": "integer"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "to": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
                 }
               }
+            }
+          }
+        },
+        "deprecated": {}
+      },
+      "prepare_egovframe_database": {
+        "input": {
+          "type": "object",
+          "required": [
+            "projectDir"
+          ],
+          "properties": {
+            "database": {
+              "type": "string",
+              "enum": [
+                "altibase",
+                "cubrid",
+                "goldilocks",
+                "maria",
+                "mariadb",
+                "mysql",
+                "oracle",
+                "postgres",
+                "postgresql",
+                "tibero"
+              ]
+            },
+            "dryRun": {
+              "type": "boolean",
+              "default": true
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "json",
+                "markdown"
+              ],
+              "default": "markdown"
+            },
+            "imageRegistry": {
+              "type": "string",
+              "default": "docker.io/library",
+              "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\\d{1,5})?(\\/[a-z0-9._-]+)*$"
+            },
+            "includeComments": {
+              "type": "boolean",
+              "default": false
+            },
+            "keep": {
+              "type": "boolean",
+              "default": false
+            },
+            "offline": {
+              "type": "boolean",
+              "default": false
+            },
+            "projectDir": {
+              "type": "string"
+            },
+            "run": {
+              "type": "boolean",
+              "default": false
+            },
+            "scripts": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "default": 600000,
+              "minimum": 30000,
+              "maximum": 3600000
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "required": [
+            "charsetFixed",
+            "commands",
+            "connection",
+            "database",
+            "databaseFrom",
+            "dryRun",
+            "notes",
+            "outputs",
+            "projectDir",
+            "sources",
+            "statements",
+            "supplemented",
+            "tables",
+            "views"
+          ],
+          "properties": {
+            "charsetFixed": {
+              "type": "integer"
+            },
+            "commands": {
+              "type": "object",
+              "required": [
+                "bash",
+                "cmd"
+              ],
+              "properties": {
+                "bash": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "cmd": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "connection": {
+              "type": "object",
+              "required": [
+                "database",
+                "host",
+                "passwordKey",
+                "port",
+                "source",
+                "user"
+              ],
+              "properties": {
+                "database": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "passwordKey": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "port": {
+                  "type": "integer"
+                },
+                "source": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "user": {
+                  "type": "string"
+                }
+              }
+            },
+            "database": {
+              "type": "string"
+            },
+            "databaseFrom": {
+              "type": "string",
+              "enum": [
+                "parameter",
+                "project"
+              ]
+            },
+            "dryRun": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "outputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "bytes",
+                  "path",
+                  "status"
+                ],
+                "properties": {
+                  "bytes": {
+                    "type": "integer"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "create",
+                      "same",
+                      "written"
+                    ]
+                  }
+                }
+              }
+            },
+            "projectDir": {
+              "type": "string"
+            },
+            "run": {
+              "type": "object",
+              "required": [
+                "errors",
+                "ok",
+                "ran"
+              ],
+              "properties": {
+                "container": {
+                  "type": "string"
+                },
+                "durationMs": {
+                  "type": "number"
+                },
+                "errors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "hangul": {
+                  "type": "object",
+                  "required": [
+                    "column",
+                    "expected",
+                    "key",
+                    "ok",
+                    "table"
+                  ],
+                  "properties": {
+                    "actualHex": {
+                      "type": "string"
+                    },
+                    "column": {
+                      "type": "string"
+                    },
+                    "expected": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "table": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "image": {
+                  "type": "string"
+                },
+                "kept": {
+                  "type": "boolean"
+                },
+                "logTail": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "port": {
+                  "type": "integer"
+                },
+                "ran": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "rows": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "actual",
+                      "expected",
+                      "table"
+                    ],
+                    "properties": {
+                      "actual": {
+                        "type": "integer"
+                      },
+                      "expected": {
+                        "type": "integer"
+                      },
+                      "table": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "tables": {
+                  "type": "object",
+                  "required": [
+                    "actual",
+                    "expected"
+                  ],
+                  "properties": {
+                    "actual": {
+                      "type": "integer"
+                    },
+                    "expected": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "path"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "components",
+                      "found",
+                      "full",
+                      "listed"
+                    ]
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "statements": {
+              "type": "object",
+              "required": [
+                "comment",
+                "data",
+                "duplicates",
+                "schema",
+                "skipped"
+              ],
+              "properties": {
+                "comment": {
+                  "type": "integer"
+                },
+                "data": {
+                  "type": "integer"
+                },
+                "duplicates": {
+                  "type": "integer"
+                },
+                "schema": {
+                  "type": "integer"
+                },
+                "skipped": {
+                  "type": "integer"
+                }
+              }
+            },
+            "supplemented": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "tables": {
+              "type": "integer"
+            },
+            "views": {
+              "type": "integer"
             }
           }
         },
@@ -5586,11 +6896,27 @@
                     }
                   }
                 },
+                "attempts": {
+                  "type": "integer"
+                },
                 "command": {
                   "type": "string"
                 },
                 "durationMs": {
                   "type": "number"
+                },
+                "failureHint": {
+                  "type": "string"
+                },
+                "failureKind": {
+                  "type": "string",
+                  "enum": [
+                    "compile",
+                    "other",
+                    "repository-unavailable",
+                    "test",
+                    "timeout"
+                  ]
                 },
                 "ran": {
                   "type": "boolean"
@@ -5622,9 +6948,159 @@
                     "type": "string"
                   }
                 },
-                "analysis": {},
-                "command": {},
-                "durationMs": {},
+                "analysis": {
+                  "type": "object",
+                  "required": [
+                    "byDirectory",
+                    "capped",
+                    "cascade",
+                    "errors",
+                    "files",
+                    "linked",
+                    "missingPackage",
+                    "missingPackages",
+                    "other",
+                    "topFiles"
+                  ],
+                  "properties": {
+                    "byDirectory": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "dir",
+                          "errors"
+                        ],
+                        "properties": {
+                          "dir": {
+                            "type": "string"
+                          },
+                          "errors": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "capped": {
+                      "type": "boolean"
+                    },
+                    "cascade": {
+                      "type": "integer"
+                    },
+                    "errors": {
+                      "type": "integer"
+                    },
+                    "files": {
+                      "type": "integer"
+                    },
+                    "linked": {
+                      "type": "object",
+                      "required": [
+                        "manual",
+                        "rules",
+                        "unlinked"
+                      ],
+                      "properties": {
+                        "manual": {
+                          "type": "integer"
+                        },
+                        "rules": {
+                          "type": "integer"
+                        },
+                        "unlinked": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "missingPackage": {
+                      "type": "integer"
+                    },
+                    "missingPackages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "cascade",
+                          "direct",
+                          "errors",
+                          "files",
+                          "hint",
+                          "package"
+                        ],
+                        "properties": {
+                          "cascade": {
+                            "type": "integer"
+                          },
+                          "direct": {
+                            "type": "integer"
+                          },
+                          "errors": {
+                            "type": "integer"
+                          },
+                          "files": {
+                            "type": "integer"
+                          },
+                          "hint": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "package": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "other": {
+                      "type": "integer"
+                    },
+                    "topFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "errors",
+                          "file",
+                          "sample"
+                        ],
+                        "properties": {
+                          "errors": {
+                            "type": "integer"
+                          },
+                          "file": {
+                            "type": "string"
+                          },
+                          "sample": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "attempts": {
+                  "type": "integer"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "durationMs": {
+                  "type": "number"
+                },
+                "failureHint": {
+                  "type": "string"
+                },
+                "failureKind": {
+                  "type": "string",
+                  "enum": [
+                    "compile",
+                    "other",
+                    "repository-unavailable",
+                    "test",
+                    "timeout"
+                  ]
+                },
                 "parent": {
                   "type": [
                     "string",
@@ -5646,8 +7122,12 @@
                     "type": "string"
                   }
                 },
-                "ran": {},
-                "reason": {},
+                "ran": {
+                  "type": "boolean"
+                },
+                "reason": {
+                  "type": "string"
+                },
                 "reference": {
                   "type": "string"
                 },
@@ -5657,8 +7137,15 @@
                     "type": "string"
                   }
                 },
-                "success": {},
-                "timedOut": {},
+                "success": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "timedOut": {
+                  "type": "boolean"
+                },
                 "versionsChanged": {
                   "type": "array",
                   "items": {
@@ -6011,6 +7498,12 @@
             "projectDir": {
               "type": "string"
             },
+            "retryTransient": {
+              "type": "integer",
+              "default": 1,
+              "minimum": 0,
+              "maximum": 3
+            },
             "testFilter": {
               "type": "string"
             },
@@ -6164,6 +7657,257 @@
           }
         },
         "deprecated": {}
+      },
+      "verify_egovframe_startup": {
+        "input": {
+          "type": "object",
+          "required": [
+            "projectDir"
+          ],
+          "properties": {
+            "format": {
+              "type": "string",
+              "enum": [
+                "json",
+                "markdown"
+              ],
+              "default": "markdown"
+            },
+            "path": {
+              "type": "string",
+              "pattern": "^\\/[\\w\\-./]*$"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 65535
+            },
+            "projectDir": {
+              "type": "string"
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "default": 300000,
+              "minimum": 30000,
+              "maximum": 1800000
+            },
+            "tomcatHome": {
+              "type": "string"
+            }
+          }
+        },
+        "output": {
+          "type": "object",
+          "required": [
+            "buildTool",
+            "chain",
+            "command",
+            "durationMs",
+            "logTail",
+            "notes",
+            "port",
+            "projectDir",
+            "runtime",
+            "started",
+            "success",
+            "url"
+          ],
+          "properties": {
+            "build": {
+              "type": "object",
+              "required": [
+                "errors",
+                "ran",
+                "success"
+              ],
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "durationMs": {
+                  "type": "number"
+                },
+                "errors": {
+                  "type": "integer"
+                },
+                "failureHint": {
+                  "type": "string"
+                },
+                "failureKind": {
+                  "type": "string"
+                },
+                "ran": {
+                  "type": "boolean"
+                },
+                "success": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "buildTool": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "gradle",
+                    "maven"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "cause": {
+              "type": "object",
+              "required": [
+                "hint",
+                "kind",
+                "summary"
+              ],
+              "properties": {
+                "bean": {
+                  "type": "string"
+                },
+                "driver": {
+                  "type": "string"
+                },
+                "hint": {
+                  "type": "string"
+                },
+                "jdbcUrl": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "bean-creation",
+                    "build",
+                    "config-missing",
+                    "db-connection",
+                    "db-schema",
+                    "driver-missing",
+                    "http-error",
+                    "javax-namespace",
+                    "mapper-xml",
+                    "other",
+                    "port-in-use",
+                    "repository-unavailable",
+                    "timeout"
+                  ]
+                },
+                "line": {
+                  "type": "integer"
+                },
+                "resource": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                }
+              }
+            },
+            "chain": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "command": {
+              "type": "string"
+            },
+            "durationMs": {
+              "type": "number"
+            },
+            "http": {
+              "type": "object",
+              "required": [
+                "ok",
+                "status",
+                "url"
+              ],
+              "properties": {
+                "ok": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "url": {
+                  "type": "string"
+                }
+              }
+            },
+            "logTail": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "port": {
+              "type": "integer"
+            },
+            "projectDir": {
+              "type": "string"
+            },
+            "runtime": {
+              "type": "string",
+              "enum": [
+                "boot",
+                "tomcat",
+                "unknown"
+              ]
+            },
+            "started": {
+              "type": "boolean"
+            },
+            "startedInMs": {
+              "type": "number"
+            },
+            "success": {
+              "type": "boolean"
+            },
+            "tomcat": {
+              "type": "object",
+              "required": [
+                "downloaded",
+                "home",
+                "version"
+              ],
+              "properties": {
+                "downloaded": {
+                  "type": "boolean"
+                },
+                "home": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                }
+              }
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "deprecated": {}
       }
     },
     "cli": {
@@ -6171,14 +7915,18 @@
         "assess": "generate_egovframe_report",
         "bundle": "prepare_egovframe_offline_bundle",
         "check": "check_egovframe_dependencies",
+        "db": "prepare_egovframe_database",
         "deliver": "prepare_egovframe_delivery",
         "diagnose": "diagnose_egovframe_project",
+        "fix": "fix_egovframe_secure_coding",
+        "fix-deps": "fix_egovframe_dependencies",
         "migrate": "migrate_egovframe_project",
         "network": "diagnose_egovframe_network",
         "rehearse": "rehearse_egovframe_migration",
         "sbom": "generate_egovframe_sbom",
         "sbom-check": "check_egovframe_sbom",
         "secure": "check_egovframe_secure_coding",
+        "startup": "verify_egovframe_startup",
         "validate": "validate_egovframe_project"
       },
       "exitCodes": {
@@ -6193,6 +7941,7 @@
       "EGOVFRAME_BUNDLE_MAX_AGE_DAYS",
       "EGOVFRAME_CACHE_DIR",
       "EGOVFRAME_LANG",
+      "EGOVFRAME_MAVEN_MIRROR",
       "EGOVFRAME_OFFLINE_BUNDLE"
     ],
     "node": ">=22"
