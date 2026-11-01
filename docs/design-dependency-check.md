@@ -107,6 +107,24 @@ generate_egovframe_sbom(projectDir, outputPath="sbom/bom.cdx.json", bomFormat="c
 - `test:dependencies-live`(CI): log4j 1.2.17 픽스처를 `offline=false` 로 점검해 OSV 결과가 붙는지 확인; v0.34 — 공식 `egovframe-boot-web`·`egovframe-web` 템플릿 pom(Initializr 고정 commit)에서 기준 없음 0건, 공식 공통컴포넌트 v3.10.0 pom 에서 기준 없음 5건 이하
 - 실제 자산(v0.34): 공식 5.x `egovframe-boot-web` 템플릿 → parent 관리 15건(Boot BOM 기준 버전 표시)·기준 없음 0, `egovframe-web` → parent 관리 19·기준 없음 0, 공식 공통컴포넌트 v3.10.0 pom 66건 → 기준 없음 **17 → 1**(`xerces:xercesImpl`), 벤더 6(Altibase·Tibero·CUBRID·mGov·GPKI 2), 교체 3 → 12(옛 MySQL/Oracle 좌표·Jackson 1·xmlbeans·Ehcache 2·HttpClient 4·ANTLR 3·Spring Social·DBCP1·Log4j1·fileupload), RTE 전이로 mybatis 3.1.1 → 3.5.19 기준 미만 판정
 
+## 자동 조치 (v1.9, `fix_egovframe_dependencies`)
+
+**왜**: 점검은 "무엇이 취약한가"까지였고, "어느 버전으로 올려야 parent 와 충돌하지 않는가"는 사용자가 좌표마다 찾았습니다. 공식 `egovframe-msa-common-components` 는 모듈마다 parent 보다 낮은 버전·취약 버전을 직접 고정해 두어(tomcat-embed·netty·logback·log4j 버전 속성) 그대로 두면 parent 를 올려도 줄지 않습니다. 기준 데이터(parent·Boot BOM 관리 버전)와 OSV 범위, 저장소의 배포 버전 목록으로 대부분을 규칙으로 정할 수 있습니다.
+
+**결정**
+- 조치 순서: parent 상향(기존 `planPomUpdate` 자동 항목) → 고정 해제 → 좌표 교체 → 취약 버전 상향. 같은 메모리 사본에 차례로 적용하고 단계마다 pom 을 다시 읽어, 앞 단계의 결과(새 parent 의 관리 버전, 지운 고정)가 다음 판정에 들어갑니다.
+- **고정 해제는 parent 관리 버전이 깨끗할 때만**: 관리 버전에 권고가 있으면 고정을 풀지 않습니다. 풀면 더 취약해지고(msa 를 5.1.0 으로 올리면 tomcat 관리 10.1.55 가 고정 10.1.52 보다 높지만 둘 다 취약), 대신 취약 버전 상향이 고정 버전을 올립니다. major 가 다른 해제(mysql-connector-j 8.4 → Boot BOM 9.4)는 의도한 고정일 수 있어 수동입니다.
+- **취약 버전 상향은 "직접 적은 버전"만**: 리터럴이거나 같은 계열(가장 짧은 groupId 와 같거나 그 하위) 좌표만 쓰는 버전 속성. 속성이면 속성 정의 하나를 바꿔 계열 버전이 엇갈리지 않게 합니다. 버전을 적지 않은 좌표(parent 관리)와 전이 의존성은 `dependencyManagement` 로 억지로 올리지 않고 보고만 합니다 — 계열의 다른 artifact 는 parent 버전에 남아 버전이 섞이기 때문입니다(기획에서 고려했던 dependencyManagement 추가는 이 이유로 뺐습니다).
+- **수정 버전**: 권고별 최소 `fixed` 의 최댓값 → 다른 권고 범위면 다음 `fixed` → 그 버전으로 OSV 재조회(새 권고면 반복, 3회) → 저장소 `maven-metadata.xml` 의 같은 꼬리·정식 릴리스 중 최소. 같은 major 가 아니면 수동. 실측에서 OSV `fixed` 는 배포 버전과 두 번 달랐습니다 — guava `33.7.2`(실제 `33.7.2-jre`), tomcat `10.1.58`(배포 안 됨, 다음은 10.1.59).
+- **검증 = compile, 실패하면 전부 되돌림**: 파일 트랜잭션 안에서 쓰고 compile 을 돌려, 실패하면 트랜잭션 롤백(백업 폴더도 남지 않음). 어느 조치가 깨뜨렸는지 이분 탐색하지 않습니다(단순함 우선 — `kinds` 로 나눠 다시 적용).
+- 전·후 수치는 선언 좌표 기준(버전이 없으면 parent 기준 버전). `check_egovframe_dependencies` 의 OSV 집계(버전을 확정한 선언만)와 범위가 달라 숫자가 다를 수 있습니다.
+
+- **중복 선언도 parent 단계에서 지움**: 공식 msa 의 EgovQuestionnaire 는 commons-configuration2·commons-lang3 를 두 번 선언합니다. 로컬 Maven 3.9.11 은 경고지만 GitHub Actions 의 Maven 은 "must be unique" 로 프로젝트를 읽지 않아 compile 확인이 3초 만에 실패하고 모두 되돌려졌습니다(첫 CI 실행). `update` 의 같은 자동 항목(내용이 같은 뒤 선언 제거)을 함께 적용하고, compile 실패 결과에 로그 끝 40줄(`build.logTail`)을 남깁니다.
+
+**실측(2026-10-29)**: msa-common-components(parent 5.0.1, 11 모듈) — 목표 5.0.2: parent 13(중복 선언 2 포함) · 고정 해제 5 · 상향 54 · 수동 10, 권고 47 → 3, 적용 후 `mvn compile` 통과(약 1분). 목표 5.1.0: 권고 47 → 1. 공식 web·boot-web 템플릿: parent 상향 1건 말고 0건.
+
+**검증**: `test:deps-fix`(게이트, 가짜 OSV·저장소 목록) — 수정 버전 선택 11경우, 원문 보존(주석·들여쓰기·CRLF, 기대 텍스트와 바이트 일치), dryRun 무기록, 백업·계획 파일, 멱등, compile 실패·저장소 장애 롤백, 실패 주입, 멀티 모듈 루트 속성, Gradle, offline, kinds, MCP·CLI. `test:deps-fix-live`(CI 통합) — 위 실측을 방향(절반 이하·compile 통과·멱등)으로 단언.
+
 ## parent 버전별 기준 (v1.3, 표준프레임워크 5.1.0)
 
 표준프레임워크 5.1.0 이 공식 저장소에 배포되면서(2026-09-28~10-12, GitHub 태그·공지 없음) 기준을 parent 계열마다 따로 둡니다.
@@ -117,6 +135,18 @@ generate_egovframe_sbom(projectDir, outputPath="sbom/bom.cdx.json", bomFormat="c
 - Boot parent 의 버전 속성(`spring-framework.version` 등)은 상속한 `spring-boot-dependencies` 의 같은 이름 속성을 재정의합니다(Maven 속성 상속). v1.3 에서 생성기가 이를 반영하도록 고쳤고, 그래서 5.0.2 기준도 다시 생성했습니다(Boot BOM 좌표 1473 → 1474, 72개 좌표 버전이 parent 재정의 값으로 바뀜).
 - `-egov.N`: 5.1.0 은 `spring-security 6.5.11-egov.1`·`spring-integration 6.5.10-egov.1`·`spring-ai-* 1.1.8-egov.1` 같은 재빌드본을 씁니다. 버전 비교는 숫자 부분만 보므로 원 버전과 같게 취급하고, OSV 는 원 버전으로 조회하며(`osvVersion`) 판정 note 에 재빌드라고 적습니다. 재빌드 BOM 은 표준프레임워크 저장소에서 받습니다.
 - 5.0.x parent 프로젝트에는 "5.1.0 parent 가 저장소에 배포돼 있다(GitHub 태그 없음)"는 안내를 notes 에 남깁니다.
+
+### 5.1.0 재배포와 Maven 우선순위 (v1.6)
+
+2026-10-26 CI 에서 5.1 기준 판정이 바뀐 것을 계기로, 저장소의 5.1.0 parent 2종과 `egovframe-rte-root` 가 **같은 버전 번호로 다시 배포**된 것을 확인했습니다(세 pom 모두 sha256 변경). web parent 는 Jakarta EE 9(Servlet 5.0·JSP 3.0·EL 4.0·JSTL 2.0, Tomcat 10.0)로 바뀌어 BOM 의 EE 10 버전을 자기 `dependencyManagement` 직접 선언으로 덮습니다(`jakarta.annotation-api` 2.0.0, `jakarta.xml.bind-api` 3.0.1, `jaxb-bom` 3.0.2 를 rte-root 보다 먼저 import 등). 5.1 기준을 다시 만들면서 생성기와 판정을 Maven 규칙에 맞췄습니다.
+
+- **출처별 실제 버전**(`managed[].versionBySource`): web 은 parent 직접 선언 > import BOM(선언 순서, 먼저 나온 쪽). boot 는 parent 직접 선언 > 상속한 `spring-boot-dependencies` > 자기 import(rte-root 등) — Maven 3 은 이미 관리되는(상속 포함) 좌표를 import 가 덮지 않습니다(boot parent 의 주석과 다르며, 실제 `dependency:tree` 로 확인: `jakarta.validation-api` 3.0.2·`jakarta.annotation-api` 2.1.1). 판정은 프로젝트 parent 종류의 값을 씁니다.
+- **BOM 구성원**(`bomMembers`): import BOM 마다 실제 구성원과 출처별 선언 순서를 적고, 계열 규칙보다 먼저 씁니다. 같은 groupId 에 버전 줄이 다른 BOM(`micrometer-bom` 1.15.x·`micrometer-tracing-bom` 1.5.x)과 BOM 번호와 다른 구성원 버전(`jackson-bom` 2.22.3 의 `jackson-annotations` 2.22)을 맞게 판정합니다. 그 groupId 의 BOM 이 있는데 구성원이 아니면 계열 규칙을 쓰지 않습니다(예: `io.micrometer:context-propagation` 은 Boot BOM 기준).
+- boot parent 프로젝트에서 Boot BOM 버전이 BOM 구성원·계열과 다르면 Boot BOM 을 기준으로 씁니다(같으면 예전처럼 계열로 표시).
+- 결과(공식 템플릿을 5.1.0 으로 갱신): web 기준 미만 2(`classmate` 1.5.1·`jboss-logging` 3.4.1 — EE 9 용 `hibernate-validator` 7.0.5 가 끌어오는 버전, Boot BOM 대비), boot-web 0.
+- 5.0.2 기준은 pom 이 그대로라 다시 만들지 않았습니다(재생성하면 `bomMembers`·`versionBySource` 가 생김).
+- 2026-10-27 에 parent 2종이 한 번 더 다시 배포됐습니다(모든 프로젝트에 넣던 RTE·Boot 스타터 의존성 제거, SpringDoc OpenAPI 관리 추가). 기준을 다시 만들었고 공식 템플릿 판정은 그대로입니다(web 2·boot-web 0).
+- 5.1.0 은 태그 전이라 이렇게 자주 바뀌므로 `test:update-live` 는 동봉 5.1 기준을 만든 pom 3종과 지금 저장소의 sha256 이 다르면 실패 대신 "재생성 권장" 알림만 남깁니다. 판정이 실제로 바뀌면 5.1 기준 판정 단언이 기준 미만 좌표 목록과 함께 실패합니다. `test:catalog-drift-live`(`sync_egovframe_templates`)도 같은 변화를 `sha256 변경` 으로 보고합니다.
 
 ## 기준 갱신 절차
 

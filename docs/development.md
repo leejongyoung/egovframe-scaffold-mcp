@@ -12,6 +12,10 @@ npm run prepublishOnly   # 빌드 + 게이트 테스트 전부(릴리스 전 필
 
 빌드 없이 소스로 MCP 서버를 띄우려면 클라이언트 설정에 `npx -y tsx /절대경로/src/index.ts` 를, 빌드한 것을 쓰려면 `node /절대경로/dist/index.js` 를 적습니다.
 
+## 가이드 제목 카탈로그 갱신
+
+`node scripts/generate-catalog.mjs --docs <egovframe-docs 경로>`는 가이드의 `title:` 앞 공백·탭 들여쓰기를 허용하며, 제목이 없으면 파일 이름을 사용합니다. 문서 검색은 동봉된 정적 카탈로그의 제목을 사용하므로 문서 원본만 수정해도 검색 제목이 즉시 바뀌지는 않습니다. 재생성 시 고정 소스 아카이브를 사용하고(`--zip`, 필요 시 `--archive-sha256`·`--archive-bytes`; 스크립트 머리말 참고), 제목 갱신과 무관한 문서 매핑·출처 지문 변경은 따로 검토하세요.
+
 ## 검증 체계
 
 - 함수 레벨: 실제 템플릿(약 296파일) 생성, pom 좌표·DbType 적용, 중복 생성 거부, `dryRun` 미리보기(무기록) 확인 (`npm run smoke`)
@@ -26,6 +30,8 @@ npm run prepublishOnly   # 빌드 + 게이트 테스트 전부(릴리스 전 필
 - 프로토콜 레벨: 빌드된 서버를 실제 프로세스로 띄워 MCP initialize / tools/list 핸드셰이크, `serverInfo.version`↔`package.json` 일치, 핵심 도구 노출, `jdk` 패턴 제약 노출 확인 (`npm run test:handshake`, 네트워크 불필요)
 - 릴리스 레벨: 배포 판정(버전·`server.json`·변경 이력·태그·npm 네 조건)과 릴리스 노트 추출, `npm pack --dry-run` 의 tarball 내용(포함·제외·크기 상한), `server.json` 설명 100자 제한 (`npm run test:release`·`npm run test:registry`, 네트워크 불필요); CI 통합이 `mcp-publisher validate` 로 레지스트리 스키마를 실제 검증
 - 플랫폼 레벨: CI가 릴리스 게이트를 ubuntu·windows × Node 22·24 매트릭스로(v1.0, 이전 18·20·22) 실행하고, 공식 저장소를 내려받는 통합 테스트는 ubuntu/Node 22에서 실행합니다. 타임아웃 시 프로세스 트리 종료는 POSIX·Windows 모두 실제 프로세스로 검증합니다 (`npm run test:build`).
+- 원격 저장소 장애 레벨(v1.6): 실측 로그(Maven 3.9·옛 형식·Gradle·연결 끊김)의 일시 장애 판정과 404·컴파일 오류 제외, 빌드·테스트의 `-U` 재실행·한도·취소, 처음 N 번 503 을 내는 로컬 저장소를 `EGOVFRAME_MAVEN_MIRROR` 로 둔 실제 `mvn` 의 요청 재시도·명령 재시도·`repository-unavailable` 판정 (`npm run test:maven-resilience`, mvn 이 없으면 장애 주입만 건너뜀). 생성 CI 의 셸 재시도는 가짜 `mvn` 으로 sh·bash 에서 실제 실행합니다(`npm run test:ci`)
+- 런타임 의존성 감사는 ubuntu/Node 22에서 한 번 실행합니다(`npm audit --omit=dev --audit-level=high`). 매트릭스에서 Node 버전을 제거할 때 감사 조건도 함께 바꾸며, high 이상 경고는 CI 실패로 유지합니다.
 - 레시피 레벨: `catalog/recipes.json`의 컴포넌트 id·의존성·템플릿 제공 컴포넌트 정합 검증 (`npm run test:recipes`, 네트워크 불필요). 공식 `simple-backend`의 기존 `cmm`을 보존하고 board-login의 bbs 88파일·login 41파일·SQL 4건(총 133파일)을 조립한 뒤 검증하며, 컴포넌트 이후 fault injection의 전체 staging rollback도 확인 (`npm run test:recipe-transaction`)
 - 진단 레벨: 픽스처(pom·DbType·컴포넌트 패키지)로 `diagnose_egovframe_project`의 빌드·버전·DbType·컴포넌트 지문·의존성 검출 검증 (`npm run test:diagnose`, 네트워크 불필요)
 - 전환 진단 레벨: 3.10 스타일 픽스처(pom·gradle·java·Spring XML·MyBatis XML·web.xml·JSP)에서 항목 종류·auto/manual·라인·대응 좌표를 단언하고, 5.x 스타일 픽스처에서 항목 0건과 진단 전후 디스크 불변을 확인 (`npm run test:migrate`, 87단언, 네트워크 불필요). 규칙 카탈로그는 스키마·좌표 규칙성·제거 클래스의 대체가 동봉된 5.x 소스 트리에 존재하는지·JDK 내장 `javax.*` 제외·큐레이션과 생성물 일치를 검증 (`npm run test:migration-rules`, 579단언, 네트워크 불필요). 목적지 좌표(RTE 5.x 24종·3.x 원본 18종·parent 2종·Jakarta 좌표)가 표준프레임워크 Maven 저장소와 Maven Central 에 실제로 존재하는지는 CI 통합 job 에서 확인 (`npm run test:migration-rules-live`, 61건, 네트워크 필요)
@@ -35,7 +41,7 @@ npm run prepublishOnly   # 빌드 + 게이트 테스트 전부(릴리스 전 필
 - 네트워크 진단 레벨: 오류 분류 8종, 프로브·DNS 주입으로 7가지 시나리오(전부 도달, 405/404/407/503, 프록시+타임아웃, 프록시 없음+IPv6 혼재, TLS, DNS, 필터)의 처방·안내·자격 증명 가림·셸별 명령을 단언하고, `fetchWithTimeout` 실패 메시지에 처방이 붙는지 확인 (`npm run test:network`, 33단언, 네트워크 불필요). 실제 호스트 7종 프로브는 CI 통합 job (`npm run test:network-live`) — 진단 자체의 이상과 러너 네트워크 붕괴(5개 미만 도달)는 실패, 30초 뒤 재확인에도 남는 상대 서버 쪽 장애(timeout·5xx·reset)는 경고(v1.0.2)
 - AGENTS.md 레벨: 5.x(매니페스트·래퍼·컴포넌트 2종·백업 디렉터리)와 3.x gradle 픽스처, 빈 디렉터리에서 사실 수집·ko/en 렌더링·dryRun 무기록·기존 파일 거부·overwrite·파일명 검증·staging 정리 (`npm run test:agents-md`, 22단언, 네트워크 불필요)
 - 레지스트리 메타데이터 레벨: `server.json` ↔ `package.json` 의 이름(`mcpName`)·버전·npm 좌표·스키마 URL·환경변수 문서화 정합 (`npm run test:registry`, 네트워크 불필요)
-- 프로토콜 레벨(추가): `EGOVFRAME_LANG=en` 으로 띄운 서버의 도구 34종 설명이 모두 영문이고 표에 빠진 도구가 없는지, `tools/list` 에 `title`·annotations(readOnly 13종·destructive 5종)·`outputSchema` 13종이 노출되는지 확인 (`npm run test:handshake`)
+- 프로토콜 레벨(추가): `EGOVFRAME_LANG=en` 으로 띄운 서버의 도구 39종 설명이 모두 영문이고 표에 빠진 도구가 없는지, `tools/list` 에 `title`·annotations(readOnly 13종·destructive 7종)·`outputSchema` 18종이 노출되는지 확인 (`npm run test:handshake`)
 - SBOM·해석 레벨: Maven·Gradle 트리 파서(실제 출력 픽스처), `resolve=true` 의 전이 항목·경로·선언/해석 차이·실패 경로, CycloneDX 문서 구성·보강·취약점 병합·출력 경로 거부·overwrite·dryRun (`npm run test:dependencies`, `npm run test:sbom`, 네트워크 불필요); CI 통합이 공식 `egovframe-web` 템플릿을 실제 Maven 으로 해석하고 SBOM 을 생성 (`npm run test:sbom-live`)
 - 오프라인 번들 레벨: Maven 버전 비교(숫자·한정자 순서·같은 표기), OSV 범위(여러 구간·fixed·last_affected), 덤프 색인(Maven 만·철회 제외·GIT 범위 무시)과 querybatch 같은 모양의 결과, 번들 만들기(dryRun·manifest 지문·고정 지문 불일치 거부·실패 시 무흔적·덮어쓰기 거부·로컬 git 원본 미러), 번들 읽기(fetch 훅·POST 제외·변조 거부·깨진 manifest), 원본 미러(태그·커밋·트리·blob, 없는 태그 안내), OSV 출처 노트와 30일 경고, 의존성 점검 연동, 네트워크 진단 처방 (`npm run test:offline-bundle`, 30단언, 네트워크 불필요); CI 통합이 실제 번들을 만들고 로컬 OSV 와 온라인 OSV 를 대조(97% 이상 일치 요구, 실측 100%)한 뒤 fetch 를 막고 생성·조립·재조립 미리보기·SBOM 재점검을 번들만으로 확인 (`npm run test:bundle-live`)
 - 전환 리허설 레벨: pom 맞춤(parent 추가·교체, 누락 좌표, 버전·scope, parent 관리 속성, 주석·dependencyManagement·plugin 제외, 멱등), 누락 패키지·연쇄·수동 항목 분류와 후보 좌표, Maven fork 형식·경고 제외 파서, 사본 제외 규칙·원본 지문 불변, 단계 순서(재조립 → 적용 → 컴파일 → pom 맞춤 → 컴파일)·javac 상한 해제 인자, 단계 실패 계속, 기록과 평가서 6절 (`npm run test:rehearse`, 38단언, 네트워크 불필요); CI 통합이 공식 공통컴포넌트 v4.3.2 전체 트리를 실제로 리허설해 재조립·적용 수와 오류 6,003(±10%, 누락 패키지·연쇄 95% 이상)→≤5 를 단언 (`npm run test:rehearse-live`)
@@ -67,7 +73,7 @@ npm run prepublishOnly   # 빌드 + 게이트 테스트 전부(릴리스 전 필
 - 표준프레임워크 5.1.0 레벨(v1.3): 5.1 기준(BOM `egovframe-rte-root`·Spring 6.2.19·Boot 3.5.16·Security `6.5.11-egov.1`·AI 모듈)과 계열별 기준 선택, parent 5.1.0 픽스처의 managed·outdated·`-egov.N` 판정과 OSV 원 버전 조회, 5.0.x 프로젝트의 5.1.0 안내(`test:dependencies`); 5.1.0 단계 규칙(저장소 sources jar 27종 sha256·새 AI 모듈·근거 `maven-sources`), `target="5.1.0"` 진단(`test:update`); SBOM 의 재빌드 공급자·5.1 기준(`test:sbom`); drift 의 태그 없음·태그 생김·BOM 재배포(`test:catalog-drift`); 입력 pattern 확장의 계약 분류(`test:api-contract`); CI 통합 `test:update-live` 가 공식 web·boot-web 템플릿을 5.0.2 → 5.1.0 으로 갱신해 JDK 17 compile
 - 응답 영문화 레벨(v1.2, `test:i18n` 44단언): 고정 프로젝트 2개로 17개 출력(전환·의존성·평가서·5.x 갱신·보안약점·배포·SBOM 점검·SBOM·납품·검증)을 `ko` 로 만들어 goldens(`test/fixtures/i18n-golden-ko.json`, 영문화 전 코드로 생성)와 바이트 비교, `en` 으로 다시 만들어 한글 0줄, 규칙 데이터 7파일의 한국어 문장 필드마다 `_en` 존재, `setLang`·`langFromEnv`·CLI `--lang`/`EGOVFRAME_LANG` 우선순위와 복원. 렌더러 문구를 바꿀 때만 `npm run i18n:golden` 으로 goldens 갱신
 - 진행 알림·취소 레벨(v1.2, `test:progress` = `progress-runners` 38 + `progress-tools` 41 + `progress-mcp` 10 단언): 실제 자식 프로세스 취소(pid 소멸), 러너·의존성 해석·SBOM·납품·재조립·리허설·오프라인 번들의 단계 순서·단조 증가·하위 진행 분수, 취소 시 `AbortError`·부분 출력 없음·프로젝트 트리 불변·작업공간 삭제, MCP in-memory 클라이언트의 `progressToken` 알림 순서·토큰 없으면 무알림·`notifications/cancelled` 로 가짜 `mvnw` 트리 종료
-- 안전성 레벨: 19개 도구 공통 허용 root의 미설정 호환·격리·`..` 이탈·symlink 우회·다중 root·비대상 인자 무해 6케이스와 구조화 rollback 필드를 검증합니다 (`npm run test:allowed-roots`, `npm run test:transaction`, 네트워크 불필요).
+- 안전성 레벨: 32개 도구 공통 허용 root의 미설정 호환·격리·`..` 이탈·symlink 우회·다중 root·비대상 인자 무해 6케이스와 구조화 rollback 필드를 검증합니다 (`npm run test:allowed-roots`, `npm run test:transaction`, 네트워크 불필요).
 
 ## 릴리스 절차 (매 버전 공통)
 
@@ -76,6 +82,7 @@ npm run prepublishOnly   # 빌드 + 게이트 테스트 전부(릴리스 전 필
 3. 푸시 → PR → CI 5개(ubuntu·windows × Node 22/24 + integration, v1.0 이전은 7개) 전부 통과 → squash 병합. 공개 API 를 바꿨으면 `npm run api-contract:update` 로 스냅샷을 갱신하고 그 diff 와 버전 증가 폭을 PR 에서 함께 검토합니다([버전 정책](versioning.md)). **여기까지가 사람의 일입니다.**
 4. 병합 뒤 `main` 의 CI 가 성공하면 `Release` 워크플로(`.github/workflows/release.yml`)가 `scripts/release-check.mjs` 로 전제(`server.json` 버전 일치·변경 이력 항목)를 확인하고 원격 상태(npm·태그·GitHub Release·MCP Registry)를 보아 **남은 단계만** 수행합니다: npm(OIDC trusted publishing, provenance 자동) → 게시된 커밋에 `vX.Y.Z` 태그 → GitHub Release(`scripts/release-notes.mjs`) → MCP Registry(GitHub OIDC). 조건이 안 맞으면 이유를 적고 성공 종료합니다(문서만 바꾼 병합은 아무것도 게시하지 않음)
 5. 확인: Actions 의 `Release` 요약(단계별 결과), `npm view egovframe-scaffold-mcp version`, Releases 페이지, 레지스트리 검색. 도중에 끊기면(v0.36.1 처럼 npm 전파 지연, Registry 실패 등) 손댈 것 없이 다음 `main` 병합(또는 `Run workflow`)의 Release 가 이어서 합니다 — npm 만 돼 있으면 태그를 npm 이 기록한 `gitHead` 커밋에 만들므로 패키지와 태그가 같은 코드를 가리킵니다(그 커밋이 `main` 의 조상이 아니면 수동 태그를 안내하고 멈춤)
+6. `main` 의 CI 가 원격 저장소 일시 장애(예: `maven.egovframe.go.kr` 503) 같은 코드 밖 이유로 실패하면 Release 가 돌지 않습니다(1.5.0 이 이렇게 건너뛰어져 1.5.1 이 함께 배포). 실패한 job 만 다시 돌려 성공시키면(`gh run rerun <run-id> --failed`) Release 가 이어서 돌고, 기다릴 수 없으면 `gh workflow run Release --ref main` 으로 직접 실행합니다(전제 검사는 같음)
 
 비상용 수동 절차(워크플로를 쓸 수 없을 때): `main` 에서 `node -p "require('./package.json').version"` 으로 버전 확인 **후** 태그를 `main` 커밋에 생성·푸시 → `npm publish` → `mcp-publisher publish`. 태그는 반드시 병합된 `main` 커밋에 답니다(v0.25.2·v0.28.0·v0.28.1·v0.30.0·v0.33.0 에서 잘못 단 적이 있어 자동화했습니다).
 
